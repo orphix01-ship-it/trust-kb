@@ -1,68 +1,115 @@
-grep -n "@app.post(\"/search" ~/Desktop/trust-kb/app.py
-import os, sqlite3
-from dotenv import load_dotenv
+import os
+import sqlite3
+from pathlib import Path
+from typing import List, Optional, Dict, Any
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from dotenv import load_dotenv
 from openai import OpenAI
 from pinecone import Pinecone
 
-load_dotenv()
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
-index = pc.Index(os.getenv("PINECONE_INDEX","trust-knowledge"))
-EMBED_MODEL = os.getenv("EMBED_MODEL","text-embedding-3-small")
+load_dotenv(dotenv_path=str(Path.cwd() / ".env"), override=True)
+
+OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+PINECONE_API_KEY = os.environ["PINECONE_API_KEY"]
+PINECONE_INDEX = os.environ["PINECONE_INDEX"]
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "text-embedding-3-small")
+
+client = OpenAI(api_key=OPENAI_API_KEY)
+pc = Pinecone(api_key=PINECONE_API_KEY)
+index = pc.Index(PINECONE_INDEX)
 
 app = FastAPI(title="Trust KB Search", version="1.0.0")
 
 class SearchBody(BaseModel):
     query: str
-    top_k: int = 8
-    filters: dict | None = None
+    filters: Optional[Dict[str, Any]] = None
 
 class HydrateBody(BaseModel):
-    ids: list[str]
+    ids: List[str]
 
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
 
+LEVELS = ["L1", "L2", "L3", "L4", "L5"]
+PER_LEVEL = 2  # total results = 10
+
 @app.post("/search")
 def search(b: SearchBody):
     q_vec = client.embeddings.create(model=EMBED_MODEL, input=b.query).data[0].embedding
-    res = index.query(
-        vector=q_vec, top_k=b.top_k, include_metadata=True,
-        filter=b.filters or {}
-    )
-    hits = []
-    for m in res.matches:
+
+    def fetch_level(lvl: str, need: int):
+        if need <= 0: return []
+        res = index.query(
+            vector=q_vec,
+            top_k=min(need * 6, 60),
+            include_metadata=True,
+            filter={**(b.filters or {}), "doc_level": lvl},
+        )
+        seen_doc_page, picks = set(), []
+        for m in res.matches:
+            md = m.metadata or {}
+            key = (md.get("doc_id"), md.get("page"))
+            if None in key or key in seen_doc_page:
+                continue
+            seen_doc_page.add(key)
+            picks.append(m)
+            if len(picks) >= need: break
+        return picks
+
+    results, missing = [], 0
+    for lvl in LEVELS:
+        got = fetch_level(lvl, PER_LEVEL)
+        results.extend(got)
+        if len(got) < PER_LEVEL:
+            missing += (PER_LEVEL - len(got))
+
+    if missing > 0:
+        res = index.query(vector=q_vec, top_k=120, include_metadata=True, filter=b.filters or {})
+        seen_doc_page = { ((m.metadata or {}).get("doc_id"), (m.metadata or {}).get("page")) for m in results }
+        for m in res.matches:
+            md = m.metadata or {}
+            key = (md.get("doc_id"), md.get("page"))
+            if None in key or key in seen_doc_page: continue
+            seen_doc_page.add(key)
+            results.append(m)
+            if len(results) >= len(LEVELS) * PER_LEVEL: break
+
+    out = []
+    for m in results[:len(LEVELS) * PER_LEVEL]:
         md = m.metadata or {}
-        hits.append({
+        out.append({
             "id": m.id,
             "doc_id": md.get("doc_id"),
             "title": md.get("title"),
             "page": md.get("page"),
             "version": md.get("version"),
             "jurisdiction": md.get("jurisdiction"),
+            "doc_level": md.get("doc_level"),
             "score": m.score
         })
-    return {"results": hits}
+    return {"results": out}
 
 TEXT_DB_PATH = "text.db"
 def get_text_db():
     conn = sqlite3.connect(TEXT_DB_PATH)
-    conn.execute("""CREATE TABLE IF NOT EXISTS chunks (
-        id TEXT PRIMARY KEY, text TEXT
-    );""")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chunks (
+            id TEXT PRIMARY KEY,
+            text TEXT
+        )
+    """)
     return conn
 
 @app.post("/hydrate")
 def hydrate(b: HydrateBody):
-    conn = get_text_db()
     if not b.ids:
         raise HTTPException(status_code=400, detail="No IDs provided")
-    qmarks = ",".join(["?"]*len(b.ids))
-    cur = conn.execute(f"SELECT id, text FROM chunks WHERE id IN ({qmarks})", b.ids)
-    rows = cur.fetchall()
+    conn = get_text_db()
+    qmarks = ",".join(["?"] * len(b.ids))
+    rows = conn.execute(f"SELECT id, text FROM chunks WHERE id IN ({qmarks})", b.ids).fetchall()
     if not rows:
         raise HTTPException(status_code=404, detail="No texts found for given ids")
     return {"texts": [{"id": r[0], "text": r[1]} for r in rows]}

@@ -1,32 +1,23 @@
+cd ~/Desktop/trust-kb
+cat > openapi.json << 'JSON'
 {
   "openapi": "3.1.0",
   "info": { "title": "Trust KB Search", "version": "1.0.0" },
   "servers": [{ "url": "https://YOUR-PUBLIC-URL" }],
   "paths": {
-    "/healthz": {
-      "get": {
-        "operationId": "health",
-        "responses": { "200": { "description": "OK" } }
-      }
-    },
     "/search": {
       "post": {
         "operationId": "search",
         "summary": "Quota+dedupe search across L1..L5",
         "requestBody": {
           "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "query": { "type": "string" },
-                  "filters": { "type": "object" }
-                },
-                "required": ["query"]
-              }
+          "content": { "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": { "query": { "type": "string" }, "filters": { "type": "object" } },
+              "required": ["query"]
             }
-          }
+          } }
         },
         "responses": { "200": { "description": "OK" } }
       }
@@ -37,17 +28,55 @@
         "summary": "Return full text for chunk IDs",
         "requestBody": {
           "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "ids": { "type": "array", "items": { "type": "string" } }
-                },
-                "required": ["ids"]
-              }
+          "content": { "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": { "ids": { "type": "array", "items": { "type": "string" } } },
+              "required": ["ids"]
             }
-          }
+          } }
+        },
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  }
+}
+JSON
+
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Trust KB Search", "version": "1.0.0" },
+https://github.com/orphix01-ship-it/trust-kb.git  "paths": {
+    "/search": {
+      "post": {
+        "operationId": "search",
+        "summary": "Quota+dedupe search across L1..L5",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": { "query": { "type": "string" }, "filters": { "type": "object" } },
+              "required": ["query"]
+            }
+          } }
+        },
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/hydrate": {
+      "post": {
+        "operationId": "hydrate",
+        "summary": "Return full text for chunk IDs",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": { "ids": { "type": "array", "items": { "type": "string" } } },
+              "required": ["ids"]
+            }
+          } }
         },
         "responses": { "200": { "description": "OK" } }
       }
