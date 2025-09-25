@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual env
+.venv/
+
+# Local data / artifacts
+text.db
+docs/
+docs_ocr/
+docs/_orig/
+*.log
+
+# Secrets
+.env
